@@ -26,6 +26,9 @@ and [Rich](https://rich.readthedocs.io/).
 terminal/
 ├── requirements.txt
 ├── run.py                    # convenience launcher
+├── start.sh                  # shell launcher: venv setup + .env + run
+├── Macro Monitor.command     # macOS double-click launcher (see Quick start)
+├── llms.txt                  # condensed project guide for AI assistants
 ├── README.md
 └── macro_monitor/
     ├── __init__.py
@@ -47,6 +50,19 @@ mechanical:
   knowledge of Textual.
 - **app.py** — Textual layout, timers, and keybindings.
 
+## Quick start (no coding needed)
+
+1. On the GitHub page, click the green **Code** button → **Download ZIP**,
+   and unzip it.
+2. Double-click **`Macro Monitor.command`** in the unzipped folder.
+   - First time only: macOS may block a file downloaded from the internet —
+     right-click (Control-click) the file and choose **Open**, then **Open**
+     again in the dialog.
+   - If Python 3 isn't installed yet, macOS pops up an installer — click
+     **Install**, wait for it to finish, then double-click the launcher again.
+3. The first launch takes a minute to set itself up, then the dashboard opens
+   with live data. Press `a` to add stocks to your watchlist, `q` to quit.
+
 ## Install (macOS)
 
 Requires Python 3.10+.
@@ -60,11 +76,15 @@ pip install -r requirements.txt
 
 ## Run
 
-### Static demo (no network)
+### Static demo
 
 ```bash
 python -m macro_monitor
 ```
+
+Panels show canned demo data. The watchlist is the exception — user tickers
+have no demo values, so watchlist quotes always fetch live (the only network
+calls in this mode; an empty watchlist makes no requests).
 
 ### Live data
 
@@ -117,7 +137,8 @@ Press `a` to open the watchlist manager. Start typing a ticker or company name
 — Yahoo's search endpoint returns live matches; arrow-navigate and hit Enter
 to add. With the input empty, the list shows your current tickers — Enter on a
 row removes it. The watchlist persists to `~/.config/macro_monitor/watchlist.txt`
-(one symbol per line) so it survives restarts.
+(one symbol per line) so it survives restarts. Watchlist quotes are fetched
+live even without `--live` — the panel's badge shows its own source state.
 
 ### Copy-paste
 

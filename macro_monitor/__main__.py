@@ -65,7 +65,11 @@ def main(argv: list[str] | None = None) -> None:
             fallback=static, fred_api_key=args.fred_key, watchlist=watchlist,
         )
     else:
-        provider = static
+        # Even without --live, the watchlist fetches real quotes: user
+        # tickers have no static data, so zeros would be the alternative.
+        provider = LiveDataProvider(
+            fallback=static, watchlist=watchlist, live_keys=("watchlist",),
+        )
 
     # The news provider always runs live — RSS is keyless and free. Users who
     # want to skip it (offline, low bandwidth, …) can pass --no-news.
@@ -79,8 +83,7 @@ def main(argv: list[str] | None = None) -> None:
             refresh_seconds=args.refresh, watchlist=watchlist,
         ).run()
     finally:
-        if isinstance(provider, LiveDataProvider):
-            provider.stop()
+        provider.stop()
         news.stop()
 
 

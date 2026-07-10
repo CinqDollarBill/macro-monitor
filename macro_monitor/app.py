@@ -551,9 +551,16 @@ class MacroMonitorApp(App):
         if not isinstance(self.provider, LiveDataProvider):
             return ""
         counts = {"live": 0, "cache": 0, "fallback": 0, "pending": 0}
-        # Watchlist status only counts when the user has tickers configured.
+        # Watchlist status only counts when the user has tickers configured,
+        # and keys the provider isn't fetching live don't count at all (in
+        # static mode only the watchlist is live).
         has_watchlist = bool(self.watchlist.tickers())
-        keys = [k for k in LIVE_CAPABLE_KEYS if k != "watchlist" or has_watchlist]
+        keys = [
+            k for k in LIVE_CAPABLE_KEYS
+            if k in self.provider._live_keys and (k != "watchlist" or has_watchlist)
+        ]
+        if not keys:
+            return ""
         for key in keys:
             src = self.provider.status(key).get("source", "pending")
             if src in counts:

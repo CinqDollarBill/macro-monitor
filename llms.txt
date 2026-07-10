@@ -1,0 +1,93 @@
+# Macro Monitor
+
+> Terminal-based macro/markets dashboard for macOS: a user watchlist plus
+> indexes, commodities, FX, crypto, US/Canada sovereign yield curves,
+> central-bank policy rates with market-implied odds, news headlines, and an
+> economic calendar. Python 3.10+, built on Textual + Rich. All data comes
+> from free public APIs — no paid keys required.
+
+## Run
+
+- `./start.sh --live` — recommended. Sources `.env`, creates `.venv` and
+  installs dependencies on first run, then starts live mode.
+- `python -m macro_monitor` — static demo data. The watchlist is the
+  exception: user tickers always fetch live (no demo values exist for them).
+- `Macro Monitor.command` — macOS double-click launcher; equivalent to
+  `./start.sh --live`.
+- Flags: `--live` (real data), `--fred-key KEY` (defaults to
+  `$FRED_API_KEY`), `--refresh SECONDS` (UI redraw, default 15),
+  `--watchlist AAPL,NVDA` (first-run seed only), `--no-news`.
+- FRED key: put `export FRED_API_KEY=...` in `./.env` (gitignored). Free at
+  https://fred.stlouisfed.org. Without it, US Treasury yields show static
+  fallback; everything else still goes live.
+
+## Keyboard controls
+
+- `q` quit
+- `r` force refresh (bypasses per-endpoint TTLs)
+- `c` toggle compact view
+- `a` watchlist manager: type any Yahoo ticker (e.g. `AAPL`, `DOO.TO`) or a
+  company name, Enter adds it (validated by a real fetch first — invalid
+  symbols are rejected with an error hint). With the input empty, Enter on a
+  listed row removes it. `esc` closes.
+- Text selection: hold Option (⌥) while dragging — Textual captures the mouse.
+
+## State and config
+
+- Watchlist file: `~/.config/macro_monitor/watchlist.txt`, one Yahoo symbol
+  per line. This file is the source of truth; edit it directly or via `a`.
+- `./.env`: `FRED_API_KEY`, optionally `WATCHLIST` (first-run seed).
+
+## Architecture (read this before changing code)
+
+- `macro_monitor/models.py` — dataclasses. `Instrument(name, value,
+  change_pct, unit, category, trail, ytd_pct, dtd_pct, wtd_pct)` where
+  `change_pct` is month-to-date; `trail` drives sparklines.
+  `RatesInstrument` adds tenor/country. Also `PolicyRate`, `EconomicEvent`.
+- `macro_monitor/data.py` — `DataProvider` ABC. `StaticDataProvider` ships
+  demo numbers. `LiveDataProvider(fallback, fred_api_key, watchlist,
+  live_keys)` fetches real data with three safety nets: per-endpoint TTL
+  cache (prices 60s, yields 300s), a background warmer thread, and
+  per-endpoint fallback to the static provider on failure. `live_keys`
+  restricts which endpoints fetch live — static mode uses
+  `live_keys=("watchlist",)` so only the watchlist hits the network.
+  The render path only ever reads cache; it never blocks on I/O.
+- `macro_monitor/watchlist.py` — `WatchlistConfig` (thread-safe file
+  persistence) and `search_yahoo` (autocomplete; treat as flaky — ticker
+  validation goes through the Yahoo chart → yfinance fetch path instead).
+- `macro_monitor/news.py` — WSJ/FT/Bloomberg RSS polling.
+- `macro_monitor/widgets.py` — pure Rich render functions; no Textual
+  imports, no I/O.
+- `macro_monitor/app.py` — Textual layout, timers, keybindings, watchlist
+  modal. Panels re-render on a timer from cached data.
+
+### Adding a new data feed
+
+1. Implement `_fetch_<key>` on `LiveDataProvider` returning model objects;
+   raise on failure.
+2. Register it in the `_refresh` dispatcher, add a TTL to `TTLS`, and add the
+   key to `LIVE_CAPABLE_KEYS` (all in `data.py`).
+3. Wire `status=self.provider.status("<key>")` into the matching `DataPanel`
+   in `app.py` for the source badge.
+
+## Data sources
+
+- Yahoo Finance chart API with yfinance fallback — indexes, FX, commodities,
+  and all watchlist tickers (any Yahoo symbol incl. international, e.g.
+  `DOO.TO`). Yahoo 429s trigger the yfinance fallback automatically.
+- Binance klines — BTC/ETH.
+- FRED (`DGS2/5/10/30`) — US Treasury curve; the one feed needing a key.
+- Bank of Canada Valet — GoC curve, keyless.
+- Polymarket — Fed/BoC rate-decision odds, keyless.
+- Economic calendar — static demo data.
+
+## Troubleshooting
+
+- Watchlist row shows 0.00: first fetch is pending (populates within
+  seconds) — or the symbol isn't valid on Yahoo's chart API.
+- Panel badges: `● LIVE` ok · `◆ CACHED` last fetch failed, showing previous
+  data · `○ FALLBACK` no fetch has ever landed, static seed shown ·
+  `○ loading…` warmer hasn't finished first pass · `● STATIC` endpoint not
+  live in this mode.
+- Everything static + topbar says `DATA MODE: STATIC`: the app was launched
+  without `--live`.

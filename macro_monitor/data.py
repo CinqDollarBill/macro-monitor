@@ -30,7 +30,7 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from datetime import date, datetime, timedelta
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Iterable, List, Optional
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -609,6 +609,7 @@ class LiveDataProvider(DataProvider):
         *,
         warm_on_init: bool = True,
         watchlist: Optional[WatchlistConfig] = None,
+        live_keys: Optional[Iterable[str]] = None,
     ):
         self.fallback = fallback
         self.fred_api_key = fred_api_key
@@ -626,14 +627,23 @@ class LiveDataProvider(DataProvider):
         self._wl_cache: dict[str, tuple[float, Instrument]] = {}
         self._lock = threading.RLock()
 
-        # Keys we refuse to attempt because config is missing.
-        self._disabled: set[str] = set()
+        # Keys this provider fetches live. Everything else is served straight
+        # from the fallback provider. Static mode uses this to run a
+        # watchlist-only live feed — user tickers have no canned data.
+        self._live_keys: set[str] = (
+            set(live_keys) if live_keys is not None else set(LIVE_CAPABLE_KEYS)
+        )
+
+        # Keys we refuse to attempt: not selected live, or config is missing.
+        self._disabled: set[str] = set(LIVE_CAPABLE_KEYS) - self._live_keys
         if not self.fred_api_key:
             self._disabled.add("us_rates")
 
         # Seed status so the topbar has something to show before first fetch.
         for k in LIVE_CAPABLE_KEYS:
-            if k in self._disabled:
+            if k not in self._live_keys:
+                self._status[k] = {"source": "static", "fetched_at": None, "error": None}
+            elif k in self._disabled:
                 self._status[k] = {
                     "source": "fallback", "fetched_at": None,
                     "error": "FRED API key not configured",
@@ -648,7 +658,10 @@ class LiveDataProvider(DataProvider):
 
     @property
     def mode_label(self) -> str:
-        return "LIVE"
+        # Watchlist-only providers still present as STATIC: every visible
+        # panel except the watchlist shows demo data, and the watchlist has
+        # its own LIVE badge.
+        return "LIVE" if self._live_keys == set(LIVE_CAPABLE_KEYS) else "STATIC"
 
     def status(self, key: str) -> dict:
         with self._lock:
