@@ -131,6 +131,13 @@ auto-size but the dashboard is designed for ~120 cols × 40 rows minimum.
 | `c` | Toggle compact view                                   |
 | `a` | Open the watchlist manager (search, add, remove)      |
 
+### Rearranging panels
+
+Drag any market table onto another and they swap places — grab Indexes and
+drop it on the U.S. Treasury Curve, and the two trade slots. The panel you're
+dragging dims and the drop target lights up. Your arrangement is saved to
+`~/.config/macro_monitor/layout.txt` and restored on the next launch.
+
 ### Watchlist
 
 Press `a` to open the watchlist manager. Start typing a ticker or company name

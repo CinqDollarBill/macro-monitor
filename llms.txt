@@ -30,12 +30,19 @@
   company name, Enter adds it (validated by a real fetch first — invalid
   symbols are rejected with an error hint). With the input empty, Enter on a
   listed row removes it. `esc` closes.
-- Text selection: hold Option (⌥) while dragging — Textual captures the mouse.
+- Drag-to-swap: click-drag any of the six market tables (indexes,
+  commodities, FX, crypto, UST curve, GoC curve) onto another to swap their
+  positions. The order persists to `~/.config/macro_monitor/layout.txt`.
+- Text selection: hold Option (⌥) while dragging from a non-swappable area —
+  Textual captures the mouse.
 
 ## State and config
 
 - Watchlist file: `~/.config/macro_monitor/watchlist.txt`, one Yahoo symbol
   per line. This file is the source of truth; edit it directly or via `a`.
+- Panel layout: `~/.config/macro_monitor/layout.txt`, one panel key per line
+  in slot order (4 left-column slots, then 2 right). Deleting it resets the
+  arrangement; invalid contents fall back to the default order.
 - `./.env`: `FRED_API_KEY`, optionally `WATCHLIST` (first-run seed).
 
 ## Architecture (read this before changing code)

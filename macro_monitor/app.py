@@ -13,16 +13,20 @@ Press `a` to open the watchlist manager (search/add/remove tickers).
 
 from __future__ import annotations
 
+import os
 import threading
 from datetime import datetime
+from pathlib import Path
 from typing import Callable, Optional
 
 from rich.console import RenderableType
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.widget import Widget
 from textual.widgets import Footer, Input, Label, ListItem, ListView, Static
 
 from . import widgets as W
@@ -32,12 +36,59 @@ from .news import NewsProvider
 from .watchlist import WatchlistConfig, search_yahoo
 
 
-class DataPanel(Static):
-    """Static widget whose content is produced by a render callable."""
+# Swappable table panels, in default slot order: four in the left column,
+# two in the right. The user can drag-swap them; the order persists.
+_PANEL_SLOTS = ("indexes", "commodities", "fx", "crypto", "us_rates", "canada_rates")
 
-    def __init__(self, render_fn: Callable[[], RenderableType], **kwargs):
+
+def _layout_path() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME")
+    root = Path(base) if base else Path.home() / ".config"
+    return root / "macro_monitor" / "layout.txt"
+
+
+def _load_panel_order(default: tuple[str, ...] = _PANEL_SLOTS) -> list[str]:
+    """Saved slot order for the swappable table panels.
+
+    Falls back to the default when the file is missing or isn't exactly a
+    permutation of the expected panel keys (e.g. after an app update).
+    """
+    try:
+        saved = [ln.strip() for ln in _layout_path().read_text().splitlines() if ln.strip()]
+    except OSError:
+        return list(default)
+    return saved if sorted(saved) == sorted(default) else list(default)
+
+
+def _save_panel_order(order: list[str]) -> None:
+    try:
+        path = _layout_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(order) + "\n")
+    except OSError:
+        pass  # layout persistence is best-effort; never break the UI over it
+
+
+class DataPanel(Static):
+    """Static widget whose content is produced by a render callable.
+
+    Panels constructed with a `panel_key` are drag-swappable: click-drag one
+    onto another and they trade places. The swap exchanges the two panels'
+    render callables (the widgets themselves stay in their layout slots), and
+    the resulting order is persisted via `_save_panel_order`.
+    """
+
+    def __init__(
+        self,
+        render_fn: Callable[[], RenderableType],
+        panel_key: Optional[str] = None,
+        **kwargs,
+    ):
         super().__init__("", **kwargs)
         self._render_fn = render_fn
+        self.panel_key = panel_key
+        self._dragging = False
+        self._drag_target: Optional["DataPanel"] = None
 
     def on_mount(self) -> None:
         self.refresh_content()
@@ -47,6 +98,49 @@ class DataPanel(Static):
             self.update(self._render_fn())
         except Exception as exc:  # surfaces render errors instead of crashing the app
             self.update(f"[red]render error:[/] {exc!r}")
+
+    # ---- drag-to-swap ----
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        if self.panel_key is None:
+            return
+        self.capture_mouse()
+        self._dragging = True
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        if not self._dragging:
+            return
+        self.add_class("drag-source")
+        target = self._panel_at(event.screen_x, event.screen_y)
+        if target is not self._drag_target:
+            if self._drag_target is not None:
+                self._drag_target.remove_class("drag-target")
+            self._drag_target = target
+            if target is not None:
+                target.add_class("drag-target")
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        if not self._dragging:
+            return
+        self._dragging = False
+        self.release_mouse()
+        self.remove_class("drag-source")
+        target, self._drag_target = self._drag_target, None
+        if target is not None:
+            target.remove_class("drag-target")
+            self.app.swap_panels(self, target)
+
+    def _panel_at(self, x: int, y: int) -> Optional["DataPanel"]:
+        """The swappable DataPanel under the given screen coordinates."""
+        try:
+            widget, _ = self.screen.get_widget_at(x, y)
+        except Exception:
+            return None
+        while widget is not None:
+            if isinstance(widget, DataPanel):
+                return widget if widget.panel_key and widget is not self else None
+            widget = widget.parent if isinstance(widget.parent, Widget) else None
+        return None
 
 
 class TopBar(Static):
@@ -362,6 +456,15 @@ class MacroMonitorApp(App):
         margin: 0 1;
     }
 
+    /* Drag-to-swap feedback: the grabbed panel dims, the panel under the
+       cursor lights up as the drop target. */
+    DataPanel.drag-source {
+        opacity: 55%;
+    }
+    DataPanel.drag-target {
+        background: #1a1a00;
+    }
+
     /* Watchlist sits in its own full-width band above the two-column tables
        so a long ticker list doesn't unbalance the columns below. */
     #p_watch {
@@ -429,57 +532,18 @@ class MacroMonitorApp(App):
             id="p_watch",
         )
 
+        # Six swappable table slots (4 left, 2 right), filled in the order the
+        # user last arranged them.
+        fns = self._table_render_fns()
+        slots = [
+            DataPanel(fns[key], panel_key=key, classes="panel")
+            for key in _load_panel_order()
+        ]
         with Horizontal(id="tables"):
             with Vertical(id="left"):
-                yield DataPanel(
-                    lambda: W.render_instrument_table(
-                        "Indexes", self.provider.get_indexes(),
-                        compact=self.compact_mode,
-                        status=self.provider.status("indexes"),
-                    ),
-                    classes="panel", id="p_eq",
-                )
-                yield DataPanel(
-                    lambda: W.render_instrument_table(
-                        "Commodities", self.provider.get_commodities(),
-                        compact=self.compact_mode,
-                        status=self.provider.status("commodities"),
-                    ),
-                    classes="panel", id="p_co",
-                )
-                yield DataPanel(
-                    lambda: W.render_instrument_table(
-                        "FX", self.provider.get_fx(),
-                        compact=self.compact_mode,
-                        status=self.provider.status("fx"),
-                    ),
-                    classes="panel", id="p_fx",
-                )
-                yield DataPanel(
-                    lambda: W.render_instrument_table(
-                        "Crypto", self.provider.get_crypto(),
-                        compact=self.compact_mode,
-                        status=self.provider.status("crypto"),
-                    ),
-                    classes="panel", id="p_crypto",
-                )
+                yield from slots[:4]
             with Vertical(id="right"):
-                yield DataPanel(
-                    lambda: W.render_instrument_table(
-                        "U.S. Treasury Curve", self.provider.get_us_rates(),
-                        compact=self.compact_mode,
-                        status=self.provider.status("us_rates"),
-                    ),
-                    classes="panel", id="p_ust",
-                )
-                yield DataPanel(
-                    lambda: W.render_instrument_table(
-                        "Government of Canada Curve", self.provider.get_canada_rates(),
-                        compact=self.compact_mode,
-                        status=self.provider.status("canada_rates"),
-                    ),
-                    classes="panel", id="p_goc",
-                )
+                yield from slots[4:]
 
         yield DataPanel(
             lambda: W.render_policy_panel(
@@ -501,6 +565,35 @@ class MacroMonitorApp(App):
             classes="panel", id="p_events",
         )
         yield Footer()
+
+    def _table_render_fns(self) -> dict[str, Callable[[], RenderableType]]:
+        """Render callables for the six swappable table panels, by key."""
+        def table(title: str, getter: Callable[[], list], status_key: str):
+            return lambda: W.render_instrument_table(
+                title, getter(),
+                compact=self.compact_mode,
+                status=self.provider.status(status_key),
+            )
+        return {
+            "indexes": table("Indexes", self.provider.get_indexes, "indexes"),
+            "commodities": table("Commodities", self.provider.get_commodities, "commodities"),
+            "fx": table("FX", self.provider.get_fx, "fx"),
+            "crypto": table("Crypto", self.provider.get_crypto, "crypto"),
+            "us_rates": table(
+                "U.S. Treasury Curve", self.provider.get_us_rates, "us_rates"),
+            "canada_rates": table(
+                "Government of Canada Curve", self.provider.get_canada_rates, "canada_rates"),
+        }
+
+    def swap_panels(self, a: DataPanel, b: DataPanel) -> None:
+        """Trade the contents of two swappable panels and persist the layout."""
+        if a is b or not (a.panel_key and b.panel_key):
+            return
+        a._render_fn, b._render_fn = b._render_fn, a._render_fn
+        a.panel_key, b.panel_key = b.panel_key, a.panel_key
+        a.refresh_content()
+        b.refresh_content()
+        _save_panel_order([p.panel_key for p in self.query(DataPanel) if p.panel_key])
 
     def _watchlist_title(self) -> str:
         n = len(self.watchlist.tickers())
